@@ -1,0 +1,115 @@
+# Weather Insights 🌤️
+
+A Streamlit app that tracks the weather in the cities you care about, **builds its own history**
+from every fetch (the free OpenWeatherMap tier only gives current conditions), and turns that
+history into analytics you can actually use:
+
+- **Live Conditions** — current weather for your tracked cities, warmest first, with a comfort
+  score and the change since the last logged observation. One button fetches all five **city
+  sets** (262 cities, including every national capital) in batches, with air quality,
+  pausing automatically to respect the free API limit (about 10 minutes).
+- **Compare Locations** — rank cities by any metric, filter by continent, compare continent
+  averages, spot the hottest / coldest / windiest / most comfortable place right now, and see
+  temperature vs humidity at a glance.
+- **Air & Sky** — air quality ranking (PM2.5, AQI), daylight vs latitude, how often each city
+  is clear / cloudy / rainy, and how much warmer days are than nights.
+- **Analysis Sets** — themed comparisons: *Continents*, *World capitals*, *Hot vs cold*, *Humid vs dry*,
+  *Hemispheres* (same latitude, opposite seasons) and *Spain vs Madrid*. For each: group
+  averages, every city ranked and coloured by group, group averages per fetch round over time,
+  and for Spain each city's difference from Madrid.
+- **Trends** — any metric over time for several cities, plus each city's daily min → max
+  temperature range.
+- **5-Day Forecast** — OpenWeatherMap's free 3-hourly forecast: temperature vs feels-like,
+  chance of rain, a day-by-day outlook and the best time to go outside. Shown only, never logged.
+- **How it works** — what each derived metric means and how it is computed.
+
+## Setup
+
+You need [uv](https://docs.astral.sh/uv/) and a free [OpenWeatherMap API key](https://home.openweathermap.org/api_keys)
+(new keys can take up to 2 hours to activate).
+
+```bash
+git clone <this-repo-url>
+cd weather-insights
+uv sync
+cp variables.env.example variables.env     # Windows: copy variables.env.example variables.env
+```
+
+Open `variables.env` and replace `your_key_here` with your key. This file is in `.gitignore` —
+**never commit it**.
+
+## Run the app
+
+```bash
+uv run streamlit run app.py
+```
+
+Pick a city in the sidebar (e.g. `Valencia,ES` — the country code helps with ambiguous names),
+then press **Fetch now** on *Live Conditions*. Each successful fetch is appended to
+`data/weather_log.csv`; the *Compare* and *Trends* views read from that file.
+
+### Logging without opening the app
+
+```bash
+uv run python scripts/collect.py Madrid,ES Venice,IT
+uv run python scripts/collect.py --continent Europe Asia
+uv run python scripts/collect.py --set "Hot vs cold"
+uv run python scripts/collect.py --set all          # all 6 sets: 262 cities + air quality, ~10 min
+uv run python scripts/collect.py --set all --no-air # weather only, ~5 min
+```
+
+Add the country code (`Venice,IT`): without it the API may pick a namesake (Venice, Florida).
+Remember to commit `data/weather_log.csv` afterwards.
+
+## Run the tests
+
+```bash
+uv run pytest
+```
+
+The tests use hand-made data and a fake HTTP session, so they need **no API key and no internet**.
+
+## Project structure
+
+```
+.
+├── app.py                        # Streamlit entry point (5 views)
+├── scripts/collect.py            # CLI: fetch + log cities or whole continents (argparse)
+├── src/weather_app/
+│   ├── config.py                 # loads variables.env with python-dotenv
+│   ├── exceptions.py             # one exception class per failure mode
+│   ├── client.py                 # APIClient (generic) -> OpenWeatherClient (specific)
+│   ├── models.py                 # WeatherSnapshot, AirQuality, ForecastPoint, Forecast
+│   ├── storage.py                # WeatherLog: append/load the CSV history
+│   ├── regions.py                # continent + analysis-set presets, batch planning
+│   └── analytics.py              # trend / comparison / derived-metric views
+├── data/weather_log.csv          # our accumulated history (committed on purpose)
+├── tests/                        # pytest suite
+├── PROMPTS.md                    # AI collaboration log
+├── pyproject.toml
+└── variables.env.example         # template — copy to variables.env
+```
+
+## Design notes
+
+| Requirement | Where |
+|---|---|
+| Inheritance with a real reason | `APIClient` handles requests, timeouts and HTTP status codes for *any* JSON API; `OpenWeatherClient` only adds the endpoints, the key's parameter name (`appid`) and the JSON parsing — its `current()` and `forecast()` both reuse the inherited `_get()`. `ForecastPoint(WeatherSnapshot)` reuses comfort index, km/h wind and temperature sorting, adding only rain chance/amount. |
+| Encapsulation | `__api_key` is name-mangled so only `APIClient` can read it and it never appears in `repr()`; `_get`, `_handle_error`, `_auth_param_name` are protected hooks the subclass uses/overrides; `base_url`, `timeout`, `current()`, `fetch_many()` are public. |
+| Special methods | `AirQuality.__lt__` (cleanest air first), `WeatherSnapshot.__lt__` (so `sorted()` orders by temperature), `__eq__`/`__hash__` (same city + same observation time = duplicate), `__str__`/`__repr__`; `WeatherLog.__len__`; `Forecast.__len__`/`__iter__`. |
+| `@property` | `comfort_index`, `comfort_label`, `feels_like_delta`, `wind_kmh`, `label`, `rain_chance_pct`, `Forecast.warmest`/`coldest`, `daylight_hours`, `local_time`, `is_daytime`, `AirQuality.label`. |
+| Specific error handling | `InvalidInputError` (checked *before* calling the API), `LocationNotFoundError` (404), `InvalidAPIKeyError` (401), `RateLimitError` (429), `APIServiceError` (timeout, no connection, 5xx). |
+| Rate limiting | `APIClient` (base class, so any provider gets it) never makes more than `max_calls_per_minute` requests in 60 s; `OpenWeatherClient` sets 55 (free limit 60). Recent request times are kept in the private `__call_times`. |
+| Graceful multi-city fetch | `OpenWeatherClient.fetch_many()` returns the good snapshots plus a dict of per-city errors — so "Fetch all continents" (42 cities) still loads 41 if one fails. |
+| Log upgrades | New columns are only ever added at the end of `WeatherSnapshot.FIELDS`; `WeatherLog._upgrade_columns()` rewrites an older log once with the new header, leaving old values untouched and new columns empty. |
+| Analytics | Trend: `trend()`, `daily_summary()`. Comparison: `rank_locations()`, `extremes()`, `continent_summary()`, `set_comparison()`, `difference_vs_reference()`; set trend: `set_trend()` (one point per fetch round). Derived: comfort index, feels-like gap, daily range. Forecast: `forecast_daily_outlook()`, `best_time_outside()`. Air & sky: `conditions_mix()`, `air_quality_ranking()`, `day_night_difference()`; derived daylight hours, local hour, day/night, hemisphere. |
+
+**Comfort index (0-100):** start at 100, minus 3 per °C away from 21 °C, minus 0.5 per % humidity
+outside 40-60 %, minus 4 per m/s of wind above 3 m/s; clipped to 0-100.
+
+## Team
+
+<!-- Replace with real names and a one-line summary of who worked on what. -->
+- Sebastiano Cuniberti — repository setup, API client and data model
+- _Teammate 2_ — …
+- _Teammate 3_ — …
