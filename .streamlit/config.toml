@@ -1,0 +1,38 @@
+# Weather Insights look and feel. Streamlit reads this file automatically.
+# Light and dark themes both follow the viewer's system setting (Settings menu to switch).
+
+[theme]
+font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap, sans-serif"
+headingFont = "Manrope:https://fonts.googleapis.com/css2?family=Manrope:wght@600;700;800&display=swap, sans-serif"
+headingFontWeights = [800, 700, 700, 600, 600, 600]
+baseRadius = "0.75rem"
+buttonRadius = "full"
+showWidgetBorder = true
+showSidebarBorder = true
+metricValueFontWeight = 700
+# Chart colours: a sky-blue first series, then distinct, colour-blind-friendly hues.
+chartCategoricalColors = ["#0284c7", "#f59e0b", "#10b981", "#8b5cf6", "#ef4444", "#14b8a6", "#ec4899", "#64748b"]
+
+[theme.light]
+primaryColor = "#0284c7"
+backgroundColor = "#f7fafc"
+secondaryBackgroundColor = "#e8f1f8"
+textColor = "#0f172a"
+borderColor = "#d6e2ec"
+linkColor = "#0369a1"
+
+[theme.light.sidebar]
+backgroundColor = "#eef5fb"
+secondaryBackgroundColor = "#ffffff"
+
+[theme.dark]
+primaryColor = "#38bdf8"
+backgroundColor = "#0b1220"
+secondaryBackgroundColor = "#16213a"
+textColor = "#e2e8f0"
+borderColor = "#24324f"
+linkColor = "#7dd3fc"
+
+[theme.dark.sidebar]
+backgroundColor = "#0f1a2e"
+secondaryBackgroundColor = "#1b2945"
