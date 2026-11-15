@@ -50,15 +50,11 @@ def get_client():
 
 # ---------------- sidebar ----------------
 
-st.sidebar.title("🌤️ Weather Insights")
+# Page navigation is the menu bar at the top (see the bottom of this file);
+# the sidebar only holds the tools for choosing which cities to fetch.
 EXTRA_PAGES, BROKEN_PAGES = load_pages()          # teammates' pages in app_pages/
-PAGES = ["Home", "Find my city", "City profile", *[m.TITLE for m in EXTRA_PAGES],
-         "Live Conditions", "Compare Locations", "Analysis Sets", "Air & Sky", "Trends",
-         "5-Day Forecast", "How it works"]
-page = st.sidebar.radio("View", PAGES, key="page")
 
-st.sidebar.markdown("---")
-st.sidebar.subheader("Tracked locations")
+st.sidebar.subheader("📍 Tracked locations")
 
 with st.sidebar.form("add_city", clear_on_submit=True):
     new_city = st.text_input("Add a city", placeholder="e.g. Valencia,ES")
@@ -668,8 +664,12 @@ MEDALS = ["🥇", "🥈", "🥉"]
 
 
 def go_to(page_name, city=None):
-    """Button callback: switch page (and the city shown on City profile)."""
-    st.session_state.page = page_name
+    """Button callback: switch page (and the city shown on City profile).
+
+    st.switch_page can't run inside a callback, so we leave a note that the
+    navigation code at the bottom of the file picks up on the rerun.
+    """
+    st.session_state.go_to_page = page_name
     if city is not None:
         st.session_state.profile_city = city
 
@@ -944,20 +944,45 @@ def show_profile():
     st.caption("All times are the city's local time.")
 
 
-views = {
-    "Home": show_home,
-    "Find my city": show_finder,
-    "City profile": show_profile,
-    "Live Conditions": show_live,
-    "Compare Locations": show_compare,
-    "Analysis Sets": show_sets,
-    "Trends": show_trends,
-    "5-Day Forecast": show_forecast,
-    "Air & Sky": show_air_sky,
-    "How it works": show_about,
+# ---------------- navigation: the menu bar at the top ----------------
+
+def _page(fn, title, icon, url, default=False):
+    return st.Page(fn, title=title, icon=f":material/{icon}:", url_path=url, default=default)
+
+
+# Teammates' pages (app_pages/), shown only when READY. Which menu each one goes in:
+EXTRA_PAGE_MENU = {
+    "app_pages.head_to_head": ("Plan", "compare_arrows", "head-to-head"),
+    "app_pages.trip_planner": ("Plan", "luggage", "trip-planner"),
+    "app_pages.business": ("About", "workspace_premium", "plans"),
+}
+
+menus = {
+    "": [_page(show_home, "Home", "home", "home", default=True),
+         _page(show_finder, "Find my city", "travel_explore", "find-my-city"),
+         _page(show_profile, "City profile", "location_city", "city-profile")],
+    "Explore": [_page(show_live, "Live Conditions", "thermostat", "live"),
+                _page(show_compare, "Compare Locations", "bar_chart", "compare"),
+                _page(show_sets, "Analysis Sets", "category", "analysis-sets"),
+                _page(show_air_sky, "Air & Sky", "air", "air-and-sky"),
+                _page(show_trends, "Trends", "trending_up", "trends")],
+    "Plan": [_page(show_forecast, "5-Day Forecast", "partly_cloudy_day", "forecast")],
+    "About": [_page(show_about, "How it works", "help", "how-it-works")],
 }
 for _module in EXTRA_PAGES:
-    views[_module.TITLE] = lambda m=_module: m.show(history)
+    _menu, _icon, _url = EXTRA_PAGE_MENU.get(_module.__name__, ("Plan", "extension",
+                                                                _module.__name__.split(".")[-1]))
+    menus[_menu].append(_page(lambda m=_module: m.show(history), _module.TITLE, _icon, _url))
 for _name in BROKEN_PAGES:
     st.sidebar.warning(f"Page app_pages/{_name}.py has an error and is hidden.")
-views[page]()
+
+navigation = st.navigation(menus, position="top")
+
+# A button (e.g. "View city profile →") asked for another page: go there now.
+_target = st.session_state.pop("go_to_page", None)
+if _target is not None:
+    for _p in (p for pages in menus.values() for p in pages):
+        if _p.title == _target:
+            st.switch_page(_p)
+
+navigation.run()
