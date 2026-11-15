@@ -1,4 +1,4 @@
-# AI collaboration log — Task 3, Business case & About page
+# AI collaboration log — Task 3, Business case & About page (Daniella Jimenez)
 
 Tool used: **Claude (Anthropic), Opus 5.5, in Claude Code inside VS Code.**
 Same format as [`PROMPTS.md`](../PROMPTS.md).
@@ -7,7 +7,7 @@ Same format as [`PROMPTS.md`](../PROMPTS.md).
 
 ## Feature: About & plans page and README business case (session 1)
 
-**Asked (15 Nov 2026):** "Help me understand better this project, go into the team_tasks and tell
+**Asked (Daniella, 15 Nov 2026):** "Help me understand better this project, go into the team_tasks and tell
 me what I have to do. The only thing that I know is that we have to show commit history of every
 member of the team." Then: "I will be in charge of task 3."
 
