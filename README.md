@@ -2,8 +2,23 @@
 
 A Streamlit app that tracks the weather in the cities you care about, **builds its own history**
 from every fetch (the free OpenWeatherMap tier only gives current conditions), and turns that
-history into analytics you can actually use:
+history into analytics you can actually use.
 
+**Who it's for:** travellers, remote workers and exchange students deciding *where to go*.
+Instead of checking cities one by one in a phone app, they describe the weather they want and
+get every tracked city ranked by how well it fits, with air quality and daylight included.
+Our own history of observations (the free API has none) is the part competitors don't have,
+and it's downloadable as CSV for anyone who wants to buy or reuse the data.
+
+- **Home** — who it's for, when the data was last updated, the top 3 matches right now for a
+  chosen profile, a world map of all cities (temperature, comfort, PM2.5 or daylight), plain-
+  language headlines ("Coldest capital: Ulaanbaatar, −10 °C") and CSV downloads.
+- **Find my city** — set a temperature range, maximum humidity, air quality, sky and minimum
+  daylight (or start from a profile: remote work, beach break, sightseeing, snow trip). Every
+  city gets a 0-100 match score with a one-line reason, on a map and in a downloadable table.
+- **City profile** — one city's latest conditions, how it ranks worldwide ("cleaner air than
+  85 % of tracked cities"), its logged history, how often it's clear or rainy, and its 5-day
+  forecast with the best time to go outside, all in the city's local time.
 - **Live Conditions** — current weather for your tracked cities, warmest first, with a comfort
   score and the change since the last logged observation. One button fetches all five **city
   sets** (262 cities, including every national capital) in batches, with air quality,
@@ -82,6 +97,7 @@ The tests use hand-made data and a fake HTTP session, so they need **no API key 
 │   ├── models.py                 # WeatherSnapshot, AirQuality, ForecastPoint, Forecast
 │   ├── storage.py                # WeatherLog: append/load the CSV history
 │   ├── regions.py                # continent + analysis-set presets, batch planning
+│   ├── matching.py               # CityPreferences + match_cities(): the "Find my city" score
 │   └── analytics.py              # trend / comparison / derived-metric views
 ├── data/weather_log.csv          # our accumulated history (committed on purpose)
 ├── tests/                        # pytest suite
@@ -102,7 +118,13 @@ The tests use hand-made data and a fake HTTP session, so they need **no API key 
 | Rate limiting | `APIClient` (base class, so any provider gets it) never makes more than `max_calls_per_minute` requests in 60 s; `OpenWeatherClient` sets 55 (free limit 60). Recent request times are kept in the private `__call_times`. |
 | Graceful multi-city fetch | `OpenWeatherClient.fetch_many()` returns the good snapshots plus a dict of per-city errors — so "Fetch all continents" (42 cities) still loads 41 if one fails. |
 | Log upgrades | New columns are only ever added at the end of `WeatherSnapshot.FIELDS`; `WeatherLog._upgrade_columns()` rewrites an older log once with the new header, leaving old values untouched and new columns empty. |
-| Analytics | Trend: `trend()`, `daily_summary()`. Comparison: `rank_locations()`, `extremes()`, `continent_summary()`, `set_comparison()`, `difference_vs_reference()`; set trend: `set_trend()` (one point per fetch round). Derived: comfort index, feels-like gap, daily range. Forecast: `forecast_daily_outlook()`, `best_time_outside()`. Air & sky: `conditions_mix()`, `air_quality_ranking()`, `day_night_difference()`; derived daylight hours, local hour, day/night, hemisphere. |
+| Analytics | Trend: `trend()`, `daily_summary()`. Comparison: `rank_locations()`, `extremes()`, `continent_summary()`, `set_comparison()`, `difference_vs_reference()`; set trend: `set_trend()` (one point per fetch round). Derived: comfort index, feels-like gap, daily range, match score (`matching.py`). Insights: `headline_insights()`, `city_standing()`, `biggest_changes()`, `last_updated()`. Forecast: `forecast_daily_outlook()`, `best_time_outside()`. Air & sky: `conditions_mix()`, `air_quality_ranking()`, `day_night_difference()`; derived daylight hours, local hour, day/night, hemisphere. |
+
+**Match score (0-100):** weighted average of temperature (40 %, best at the middle of the
+chosen range, −10 points per °C outside it), humidity (15 %), air quality (20 %), sky (15 %)
+and daylight (10 %); parts the user doesn't mind are left out, missing data counts as half.
+`CityPreferences` is a frozen dataclass that validates its input (`InvalidInputError`) and has
+a readable `__str__`.
 
 **Comfort index (0-100):** start at 100, minus 3 per °C away from 21 °C, minus 0.5 per % humidity
 outside 40-60 %, minus 4 per m/s of wind above 3 m/s; clipped to 0-100.

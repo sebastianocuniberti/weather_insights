@@ -382,3 +382,124 @@ def day_night_difference(df):
     table["observations"] = rows.groupby("location").size().reindex(table.index)
     return (table.reset_index()[columns].round(1)
                  .sort_values("difference", ascending=False).reset_index(drop=True))
+
+
+# ---------------- landing page & city profiles: plain-language insights ----------------
+
+# metric -> (sentence start, True if a LOWER value is "better" / is what the sentence says)
+STANDING_PHRASES = {
+    "temperature": ("Warmer than", False),
+    "comfort_index": ("More comfortable than", False),
+    "pm2_5": ("Cleaner air than", True),
+    "humidity": ("Drier than", True),
+    "wind_kmh": ("Calmer than", True),
+    "daylight_hours": ("More daylight than", False),
+}
+
+
+def last_updated(df):
+    """Time of the most recent fetch in the log (UTC), or None for an empty log."""
+    if df.empty or "fetched_at" not in df:
+        return None
+    return pd.to_datetime(df["fetched_at"], utc=True).max()
+
+
+def city_standing(df, location):
+    """How one city compares with every other tracked city, from latest observations.
+
+    Returns one row per metric in STANDING_PHRASES: the city's value, its rank, the
+    number of cities with data, the % of OTHER cities it beats and a sentence like
+    "Cleaner air than 80 % of tracked cities". Metrics with no data are skipped.
+    """
+    latest = latest_by_location(df)
+    columns = ["metric", "value", "rank", "out_of", "percent_beaten", "sentence"]
+    if latest.empty or location not in set(latest["location"]):
+        return pd.DataFrame(columns=columns)
+    rows = []
+    for metric, (phrase, lower_is_said) in STANDING_PHRASES.items():
+        values = pd.to_numeric(latest.set_index("location")[metric], errors="coerce").dropna()
+        if location not in values.index or len(values) < 2:
+            continue
+        mine, others = values[location], values.drop(location)
+        beaten = (others > mine).sum() if lower_is_said else (others < mine).sum()
+        percent = round(100 * beaten / len(others))
+        rank = int((values < mine).sum() + 1) if lower_is_said else int((values > mine).sum() + 1)
+        rows.append({"metric": metric, "value": mine, "rank": rank, "out_of": len(values),
+                     "percent_beaten": percent,
+                     "sentence": f"{phrase} {percent} % of tracked cities"})
+    return pd.DataFrame(rows, columns=columns)
+
+
+def biggest_changes(df, metric="temperature", n=5):
+    """Cities whose `metric` changed most between their last two observations."""
+    columns = ["location", "previous", "latest", "change"]
+    if df.empty:
+        return pd.DataFrame(columns=columns)
+    ordered = df.sort_values("observed_at").groupby("location").tail(2)
+    pairs = ordered.groupby("location")[metric].agg(["first", "last", "size"])
+    pairs = pairs[pairs["size"] == 2]
+    out = pd.DataFrame({"location": pairs.index, "previous": pairs["first"].values,
+                        "latest": pairs["last"].values})
+    out["change"] = (out["latest"] - out["previous"]).round(1)
+    out = out.reindex(out["change"].abs().sort_values(ascending=False).index)
+    return out.head(n).reset_index(drop=True)
+
+
+def headline_insights(df):
+    """Short plain-language facts about the latest fetch, for the landing page.
+
+    E.g. ["🥶 Coldest capital: Ulaanbaatar, MN at -14 °C", ...]. Each fact is only
+    included when the data it needs exists, so this works on any log.
+    """
+    latest = latest_by_location(df)
+    if latest.empty:
+        return []
+    facts = []
+
+    def city_temp(rows, how):
+        row = rows.loc[rows["temperature"].idxmax() if how == "max" else rows["temperature"].idxmin()]
+        return f"{row['location']} at {row['temperature']:.0f} °C"
+
+    facts.append(f"🔥 Hottest place we track: {city_temp(latest, 'max')}")
+    facts.append(f"🥶 Coldest place we track: {city_temp(latest, 'min')}")
+
+    capitals = latest_by_location(tag_set(df, "World capitals"))
+    if len(capitals) >= 2:
+        facts.append(f"🏛 Warmest capital: {city_temp(capitals, 'max')} · "
+                     f"coldest capital: {city_temp(capitals, 'min')}")
+
+    comfy = latest[latest["comfort_index"] >= 80]
+    if not comfy.empty:
+        top_continent = comfy["continent"].value_counts().idxmax()
+        facts.append(f"😌 {len(comfy)} of {len(latest)} cities are very comfortable "
+                     f"(comfort 80+) — most of them in {top_continent}")
+
+    air = air_quality_ranking(df)
+    air = air[air["pm2_5"].notna()]
+    if not air.empty:
+        worst, best = air.iloc[0], air.iloc[-1]
+        clean_share = round(100 * (air["aqi"] <= 2).mean())
+        facts.append(f"🌫 Most polluted air: {worst['location']} (PM2.5 {worst['pm2_5']:.0f} µg/m³, "
+                     f"{str(worst['aqi_label']).lower()}) · {clean_share} % of cities have good or "
+                     "fair air")
+
+    wet = latest[latest["weather_main"].isin(["Rain", "Drizzle", "Thunderstorm"])]
+    if latest["weather_main"].notna().any():
+        clear = (latest["weather_main"] == "Clear").sum()
+        facts.append(f"🌦 It was raining in {len(wet)} cities and clear in {clear} "
+                     "at the last fetch")
+
+    sun = latest[pd.to_numeric(latest["daylight_hours"], errors="coerce").notna()]
+    if len(sun) >= 2:
+        long_day = sun.loc[sun["daylight_hours"].idxmax()]
+        short_day = sun.loc[sun["daylight_hours"].idxmin()]
+        facts.append(f"☀️ Longest day: {long_day['location']} ({long_day['daylight_hours']:.1f} h) · "
+                     f"shortest: {short_day['location']} ({short_day['daylight_hours']:.1f} h)")
+
+    swings = biggest_changes(df)
+    if not swings.empty:
+        top = swings.iloc[0]
+        word = "warmer" if top["change"] > 0 else "colder"
+        facts.append(f"📈 Biggest change since the previous fetch: {top['location']} is "
+                     f"{abs(top['change']):.1f} °C {word}")
+    return facts

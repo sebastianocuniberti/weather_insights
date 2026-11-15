@@ -3,7 +3,12 @@
 One entry per feature/class we asked an AI agent to help with, in the order we worked on them.
 Kept running as we go — not reconstructed at the end.
 
-Tool used: **Claude (Anthropic), Opus 5.5, in the claude.ai app.**
+Tool used: **Claude (Anthropic), Opus 5.5, in the claude.ai app** (from 15 Nov also in
+Claude Code inside VS Code).
+
+**Teammates' AI sessions** are logged in their own files in [`prompts/`](prompts/), one file per
+task (e.g. `prompts/head_to_head.md`), using the same format as the entries below — so several
+people can log work at the same time without editing this file.
 
 ---
 
@@ -200,3 +205,35 @@ Sebastiano: "Go ahead and add air quality too."
 **Kept as-is / changed / rejected:** <which, and why>
 
 ---
+
+## Feature: Home page, Find my city, City profiles, insights and CSV downloads (session 2)
+
+**Asked (Sebastiano, 15 Nov 2026):** how to make the app interesting enough to sell, with the data
+we have. Claude suggested turning it from a dashboard into a "where should I go" decision tool for
+travellers, remote workers and exchange students, plus a world map, city profiles, a landing
+section, plain-language insights and CSV downloads. Sebastiano asked for all of these (and skipped
+scheduled automatic data collection, because the presentation is the next day).
+
+**Got:**
+- `matching.py` (new): `CityPreferences` frozen dataclass (validates input with
+  `InvalidInputError`, readable `__str__`), 5 ready-made `PRESETS`, `match_cities()` giving every
+  city a 0-100 match score and a one-line reason, `match_sentence()`.
+- `analytics.py`: `last_updated()`, `city_standing()` ("cleaner air than 85 % of tracked
+  cities"), `biggest_changes()`, `headline_insights()`.
+- App: new **Home**, **Find my city** and **City profile** pages; world map (`scatter_geo`); CSV
+  downloads of the full history, the latest snapshot, match results and one city's history.
+- `app_pages/`: one file per teammate page, shown only once its `READY = True`, so teammates never
+  edit `app.py` and a broken page can't crash the app. Task split in `TEAM_TASKS.md`.
+- `tests/test_matching.py` (13 tests).
+
+**Checked:**
+- Claude ran `uv run pytest` (103 passed) and an `AppTest` of every page on our real log
+  (4,596 observations, 261 cities), including the "View city profile" buttons and a real 5-day
+  forecast for Tokyo shown in Tokyo time.
+- First version of the match score gave 56 cities 100 %, so the temperature part was changed to
+  peak at the middle of the chosen range; ties dropped to a handful.
+- Found that Ngerulmud (Palau) failed in the 15 Nov fetch and that the API renames some cities
+  (Tunis -> "Tunisia", Zagreb -> "Donji grad") — assigned to Teammate 4 in `TEAM_TASKS.md`.
+
+**Kept as-is / changed / rejected:** _to fill in after the team has reviewed it._
+

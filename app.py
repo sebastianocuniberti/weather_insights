@@ -3,16 +3,19 @@
 Run with:  uv run streamlit run app.py
 """
 
+from datetime import timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import pandas as pd
 import plotly.express as px
 import streamlit as st
 
+from app_pages import load_pages
 from weather_app import analytics
 from weather_app.client import OpenWeatherClient, validate_city_name
 from weather_app.config import get_api_key
 from weather_app.exceptions import InvalidInputError, WeatherAppError
+from weather_app.matching import PRESETS, SKY_OPTIONS, CityPreferences, match_cities, match_sentence
 from weather_app.regions import CITY_SETS, CONTINENTS, cities_for, plan_batches
 from weather_app.storage import WeatherLog
 
@@ -48,12 +51,11 @@ def get_client():
 # ---------------- sidebar ----------------
 
 st.sidebar.title("🌤️ Weather Insights")
-page = st.sidebar.radio(
-    "View",
-    ["Live Conditions", "Compare Locations", "Analysis Sets", "Air & Sky", "Trends",
-     "5-Day Forecast",
-     "How it works"],
-)
+EXTRA_PAGES, BROKEN_PAGES = load_pages()          # teammates' pages in app_pages/
+PAGES = ["Home", "Find my city", "City profile", *[m.TITLE for m in EXTRA_PAGES],
+         "Live Conditions", "Compare Locations", "Analysis Sets", "Air & Sky", "Trends",
+         "5-Day Forecast", "How it works"]
+page = st.sidebar.radio("View", PAGES, key="page")
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("Tracked locations")
@@ -642,10 +644,310 @@ about 10 minutes.
 **5-Day Forecast.** Uses OpenWeatherMap's free 3-hourly forecast. *Best time to go out* is the
 daytime step (08:00-21:00) with the highest comfort index and less than 30 % chance of rain.
 Forecasts are never written to the history log.
+
+**Find my city — match score (0-100).** Every city's latest observation is scored against
+what you ask for, as a weighted average of: temperature (40 %, best at the middle of your range,
+minus 10 points per °C outside it), humidity (15 %), air quality (20 %), sky (15 %) and daylight
+(10 %). Parts you say you don't mind are left out; a part with no data for a city counts as half.
+The code is in `src/weather_app/matching.py`.
+
+**City rankings.** "Cleaner air than 80 % of tracked cities" means 80 % of the *other* cities had
+more PM2.5 at their latest observation.
 """)
 
 
+# ---------------- home, find my city, city profile ----------------
+
+MAP_COLOURS = {
+    "Temperature (°C)": ("temperature", "RdYlBu_r", None),
+    "Comfort (0-100)": ("comfort_index", "RdYlGn", [0, 100]),
+    "Air pollution — PM2.5 (µg/m³)": ("pm2_5", "YlOrRd", [0, 75]),
+    "Daylight (hours)": ("daylight_hours", "Cividis", None),
+}
+MEDALS = ["🥇", "🥈", "🥉"]
+
+
+def go_to(page_name, city=None):
+    """Button callback: switch page (and the city shown on City profile)."""
+    st.session_state.page = page_name
+    if city is not None:
+        st.session_state.profile_city = city
+
+
+def madrid_time(ts):
+    return ts.tz_convert(MADRID).strftime("%d %b %Y, %H:%M")
+
+
+def world_map(cities, colour_col, scale, range_color=None, title=None, height=520):
+    """All cities as dots on a world map, coloured by one column, with a hover card."""
+    data = cities.copy()
+    data["lat"] = pd.to_numeric(data["lat"], errors="coerce")
+    data["lon"] = pd.to_numeric(data["lon"], errors="coerce")
+    data = data.dropna(subset=["lat", "lon", colour_col])
+    hover = {"lat": False, "lon": False, "temperature": ":.1f", "humidity": ":.0f",
+             "comfort_index": ":.0f", "aqi_label": True, "daylight_hours": ":.1f",
+             "description": True}
+    hover[colour_col] = True if colour_col not in hover else hover[colour_col]
+    labels = {"temperature": "Temp (°C)", "humidity": "Humidity (%)", "comfort_index": "Comfort",
+              "aqi_label": "Air", "daylight_hours": "Daylight (h)", "description": "Sky",
+              "pm2_5": "PM2.5 (µg/m³)", "match_score": "Match (%)", "reason": "Why"}
+    fig = px.scatter_geo(data, lat="lat", lon="lon", color=colour_col, hover_name="location",
+                         hover_data=hover, labels=labels, color_continuous_scale=scale,
+                         range_color=range_color, projection="natural earth", title=title)
+    fig.update_traces(marker=dict(size=9, line=dict(width=0.5, color="white")))
+    fig.update_geos(showcountries=True, countrycolor="rgba(128,128,128,0.4)",
+                    showland=True, landcolor="rgba(128,128,128,0.15)",
+                    showocean=False, showframe=False, bgcolor="rgba(0,0,0,0)")
+    fig.update_layout(height=height, margin=dict(l=0, r=0, t=40 if title else 0, b=0))
+    return fig
+
+
+def match_cards(results, key):
+    """The top 3 matches as cards, each with a button to its City profile."""
+    cols = st.columns(3)
+    for medal, col, (_, row) in zip(MEDALS, cols, results.head(3).iterrows()):
+        with col.container(border=True):
+            st.markdown(f"### {medal} {row['location']}")
+            st.metric("Match", f"{row['match_score']:.0f} %", delta_color="off",
+                      delta=f"comfort {row['comfort_index']:.0f}/100")
+            st.caption(row["reason"].capitalize())
+            st.button("View city profile →", key=f"{key}_{row['location']}",
+                      on_click=go_to, args=("City profile", row["location"]))
+
+
+def csv_bytes(df):
+    return df.to_csv(index=False).encode("utf-8")
+
+
+SNAPSHOT_COLUMNS = ["location", "continent", "observed_at", "temperature", "feels_like",
+                    "humidity", "wind_kmh", "comfort_index", "comfort_label", "description",
+                    "aqi", "aqi_label", "pm2_5", "daylight_hours", "lat", "lon"]
+
+
+def show_home():
+    st.title("🌤️ Weather Insights")
+    st.markdown("#### Find the city whose weather fits you.")
+    n_cities = history["location"].nunique() if not history.empty else 0
+    st.write(f"For **travellers, remote workers and exchange students**: we compare weather, "
+             f"comfort, air quality and daylight across **{n_cities} cities on every continent**, "
+             "from our own growing history, and rank them against what you're looking for.")
+    if history.empty:
+        st.info("No data yet — go to **Live Conditions** and fetch the city sets.")
+        return
+
+    updated = analytics.last_updated(history)
+    days = history["fetched_at"].dt.tz_convert(MADRID).dt.date.nunique()
+    hours_ago = (pd.Timestamp.now(tz="UTC") - updated).total_seconds() / 3600
+    ago = f"{hours_ago:.0f} h ago" if hours_ago < 48 else f"{hours_ago / 24:.0f} days ago"
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Cities tracked", n_cities)
+    c2.metric("Observations logged", f"{len(history):,}")
+    c3.metric("Days of history", days)
+    c4.metric("Last updated (Madrid)", updated.tz_convert(MADRID).strftime("%d %b, %H:%M"),
+              ago, delta_color="off")
+
+    st.subheader("⭐ Top 3 matches right now")
+    preset = st.radio("I'm looking for…", list(PRESETS), horizontal=True, key="home_preset")
+    results = match_cities(history, PRESETS[preset])
+    st.caption(f"Profile: {PRESETS[preset]}")
+    match_cards(results, "home")
+    st.button("🔎 Customise your search", type="primary", on_click=go_to, args=("Find my city",))
+
+    st.subheader("🗺 The world at the last update")
+    choice = st.selectbox("Colour cities by", list(MAP_COLOURS), key="home_map")
+    col, scale, rng = MAP_COLOURS[choice]
+    st.plotly_chart(world_map(analytics.latest_by_location(history), col, scale, rng),
+                    width="stretch")
+    st.caption("Hover over a city for its details. Each dot is that city's latest observation.")
+
+    st.subheader("📰 Today in numbers")
+    for fact in analytics.headline_insights(history):
+        st.markdown(f"- {fact}")
+
+    st.subheader("⬇️ Get the data")
+    st.write("The full history is our own dataset, built one fetch at a time — the free "
+             "OpenWeatherMap tier doesn't provide history.")
+    d1, d2 = st.columns(2)
+    d1.download_button("Full history (CSV)", log.path.read_bytes(), "weather_history.csv",
+                       "text/csv", width="stretch")
+    latest = analytics.latest_by_location(history)
+    d2.download_button("Latest snapshot, one row per city (CSV)",
+                       csv_bytes(latest[SNAPSHOT_COLUMNS]), "weather_latest.csv", "text/csv",
+                       width="stretch")
+
+
+def show_finder():
+    st.title("🔎 Find my city")
+    st.write("Tell us the weather you want. Every tracked city gets a **match score from 0 to "
+             "100** based on its latest observation.")
+    if history.empty:
+        st.info("No data yet — go to **Live Conditions** and fetch the city sets.")
+        return
+
+    preset = st.selectbox("Start from a profile", list(PRESETS), key="finder_preset")
+    base = PRESETS[preset]
+    k = preset                                   # new profile -> sliders reset to its values
+    with st.container(border=True):
+        c1, c2, c3 = st.columns(3)
+        temp = c1.slider("Temperature (°C)", -30, 45, (int(base.min_temp), int(base.max_temp)),
+                         key=f"temp_{k}")
+        humidity = c1.slider("Maximum humidity (%)", 20, 100, int(base.max_humidity), 5,
+                             key=f"hum_{k}")
+        aqi_options = [None, 1, 2, 3, 4]
+        max_aqi = c2.selectbox("Air quality", aqi_options, aqi_options.index(base.max_aqi),
+                               format_func=lambda v: "Don't mind" if v is None else
+                               f"{analytics.AQI_LABELS[v]} or better", key=f"aqi_{k}")
+        sky = c2.radio("Sky", list(SKY_OPTIONS), list(SKY_OPTIONS).index(base.sky),
+                       format_func=SKY_OPTIONS.get, horizontal=True, key=f"sky_{k}")
+        daylight = c3.slider("Minimum daylight (hours)", 0.0, 16.0, float(base.min_daylight), 0.5,
+                             key=f"day_{k}")
+        continents = c3.multiselect("Continents (empty = everywhere)",
+                                    sorted(history["continent"].unique()), key=f"cont_{k}")
+    try:
+        prefs = CityPreferences(temp[0], temp[1], humidity, max_aqi, sky, daylight,
+                                tuple(continents))
+    except InvalidInputError as e:
+        st.error(str(e))
+        return
+
+    results = match_cities(history, prefs)
+    if results.empty:
+        st.info("No cities in the chosen continents yet.")
+        return
+    strong = (results["match_score"] >= 80).sum()
+    st.success(f"**{strong}** of {len(results)} cities are a strong match (80 %+) for "
+               f"*{prefs}*. Best: **{match_sentence(results.iloc[0])}**")
+    match_cards(results, "finder")
+
+    st.plotly_chart(world_map(results, "match_score", "Viridis", [0, 100],
+                              title="Match score on the map"), width="stretch")
+
+    st.subheader("All cities, best match first")
+    table = results[["match_rank", "location", "continent", "match_score", "temperature",
+                     "humidity", "aqi_label", "daylight_hours", "description"]]
+    st.dataframe(table, hide_index=True, width="stretch", column_config={
+        "match_rank": "Rank", "location": "City", "continent": "Continent",
+        "match_score": st.column_config.ProgressColumn("Match", format="%d %%",
+                                                       min_value=0, max_value=100),
+        "temperature": st.column_config.NumberColumn("Temp (°C)", format="%.1f"),
+        "humidity": st.column_config.NumberColumn("Humidity (%)", format="%d"),
+        "aqi_label": "Air", "daylight_hours": "Daylight (h)", "description": "Sky"})
+    st.download_button("⬇️ Download these results (CSV)",
+                       csv_bytes(results.drop(columns=["fetched_at", "query"], errors="ignore")),
+                       "city_matches.csv", "text/csv")
+    with st.expander("How is the match score calculated?"):
+        st.markdown("A weighted average of five parts, each from 0 to 1: **temperature** 40 % "
+                    "(best at the middle of your range, −10 points per °C outside it), "
+                    "**humidity** 15 %, **air quality** 20 %, **sky** 15 % and **daylight** 10 %. "
+                    "Parts you don't mind about are left out, and a part with no data for a "
+                    "city counts as half.")
+
+
+def city_timezone(row):
+    """The city's own UTC offset from the log, or Madrid if it isn't known."""
+    offset = pd.to_numeric(row.get("timezone_offset"), errors="coerce")
+    return MADRID if pd.isna(offset) else timezone(timedelta(seconds=int(offset)))
+
+
+def show_profile():
+    st.title("🏙 City profile")
+    if history.empty:
+        st.info("No data yet — go to **Live Conditions** and fetch the city sets.")
+        return
+    locations = sorted(history["location"].unique())
+    if st.session_state.get("profile_city") not in locations:
+        st.session_state.profile_city = "Madrid, ES" if "Madrid, ES" in locations else locations[0]
+    location = st.selectbox("City", locations, key="profile_city")
+
+    city_rows = history[history["location"] == location].sort_values("observed_at")
+    row = city_rows.iloc[-1]
+    tz = city_timezone(row)
+    local = row["observed_at"].tz_convert(tz).strftime("%a %d %b, %H:%M")
+    st.markdown(f"## {location}")
+    st.caption(f"{row['continent']} · latest observation {local} local time · "
+               f"{str(row['description']).capitalize()} · {len(city_rows)} observations logged")
+
+    m = st.columns(6)
+    m[0].metric("Temperature", f"{row['temperature']:.1f} °C",
+                f"feels {row['feels_like']:.1f} °C", delta_color="off")
+    m[1].metric("Comfort", f"{row['comfort_index']:.0f}/100", row["comfort_label"],
+                delta_color="off")
+    m[2].metric("Air quality", row["aqi_label"] if pd.notna(row["aqi_label"]) else "—",
+                f"PM2.5 {row['pm2_5']:.0f} µg/m³" if pd.notna(row["pm2_5"]) else None,
+                delta_color="off")
+    m[3].metric("Daylight", f"{row['daylight_hours']:.1f} h"
+                if pd.notna(row["daylight_hours"]) else "—")
+    m[4].metric("Humidity", f"{row['humidity']:.0f} %")
+    m[5].metric("Wind", f"{row['wind_kmh']:.0f} km/h")
+
+    st.subheader("🌍 How it ranks worldwide")
+    standing = analytics.city_standing(history, location)
+    cols = st.columns(3)
+    for i, (_, s) in enumerate(standing.iterrows()):
+        with cols[i % 3]:
+            st.progress(int(s["percent_beaten"]),
+                        text=f"**{s['sentence']}** (#{s['rank']} of {s['out_of']})")
+
+    st.subheader("📈 Our history for this city")
+    series = city_rows[["observed_at", "temperature", "feels_like"]].melt(
+        id_vars="observed_at", var_name="series", value_name="value")
+    series["observed_at"] = series["observed_at"].dt.tz_convert(tz)
+    series["series"] = series["series"].map({"temperature": "Temperature",
+                                             "feels_like": "Feels like"})
+    fig = px.line(series, x="observed_at", y="value", color="series", markers=True,
+                  labels={"observed_at": "Local time", "value": "°C", "series": ""},
+                  title="Temperature and feels-like at every observation")
+    st.plotly_chart(fig, width="stretch")
+    left, right = st.columns(2)
+    mix = analytics.conditions_mix(city_rows)
+    if not mix.empty:
+        left.plotly_chart(px.pie(mix, names="weather_main", values="observations", hole=0.5,
+                                 title="How often it was clear, cloudy or rainy"),
+                          width="stretch")
+    daily = analytics.daily_summary(history, location)
+    right.dataframe(daily.rename(columns={
+        "date": "Date", "observations": "Obs.", "min_temp": "Min (°C)", "max_temp": "Max (°C)",
+        "mean_temp": "Mean (°C)", "daily_range": "Range (°C)", "mean_humidity": "Humidity (%)"}),
+        hide_index=True, width="stretch")
+    st.download_button("⬇️ Download this city's history (CSV)",
+                       csv_bytes(city_rows.drop(columns=["query"], errors="ignore")),
+                       f"{location.replace(', ', '_')}_history.csv", "text/csv")
+
+    st.subheader("🔮 Next 5 days")
+    query = row["query"] if pd.notna(row.get("query")) else f"{row['city']},{row['country']}"
+    try:
+        with st.spinner(f"Loading the forecast for {location}..."):
+            forecast = load_forecast(query)
+    except RuntimeError as e:          # missing API key
+        st.warning(f"🔑 Forecast unavailable: {e}")
+        return
+    except WeatherAppError as e:       # bad city, bad key, network...
+        st.warning(f"Forecast unavailable: {e}")
+        return
+    fc = forecast.to_dataframe()
+    best = analytics.best_time_outside(fc, tz=tz)
+    f1, f2, f3 = st.columns(3)
+    f1.metric("Warmest moment", f"{forecast.warmest.temperature:.1f} °C",
+              forecast.warmest.observed_at.astimezone(tz).strftime("%a %H:%M"), delta_color="off")
+    f2.metric("Coldest moment", f"{forecast.coldest.temperature:.1f} °C",
+              forecast.coldest.observed_at.astimezone(tz).strftime("%a %H:%M"), delta_color="off")
+    if best is None:
+        f3.metric("Best time to go outside", "—", "no dry daytime slot", delta_color="off")
+    else:
+        f3.metric("Best time to go outside", best["local_time"].strftime("%a %H:%M"),
+                  f"comfort {best['comfort_index']:.0f}/100", delta_color="off")
+    st.dataframe(analytics.forecast_daily_outlook(fc, tz=tz).rename(columns={
+        "date": "Date", "min_temp": "Min (°C)", "max_temp": "Max (°C)",
+        "max_rain_chance": "Max rain chance (%)", "total_rain_mm": "Total rain (mm)",
+        "mean_comfort": "Avg comfort (0-100)", "conditions": "Mostly"}),
+        hide_index=True, width="stretch")
+    st.caption("All times are the city's local time.")
+
+
 views = {
+    "Home": show_home,
+    "Find my city": show_finder,
+    "City profile": show_profile,
     "Live Conditions": show_live,
     "Compare Locations": show_compare,
     "Analysis Sets": show_sets,
@@ -654,4 +956,8 @@ views = {
     "Air & Sky": show_air_sky,
     "How it works": show_about,
 }
+for _module in EXTRA_PAGES:
+    views[_module.TITLE] = lambda m=_module: m.show(history)
+for _name in BROKEN_PAGES:
+    st.sidebar.warning(f"Page app_pages/{_name}.py has an error and is hidden.")
 views[page]()
