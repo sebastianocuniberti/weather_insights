@@ -1,6 +1,13 @@
 """Shared test fixtures: a realistic fake API response (no network needed)."""
 
+import sys
+from pathlib import Path
+
 import pytest
+
+# Import weather_app straight from src/, so the tests always run the current code even when
+# the editable install is skipped (macOS/iCloud can hide the .pth file, which Python 3.13 ignores).
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 
 @pytest.fixture

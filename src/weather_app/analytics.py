@@ -11,6 +11,8 @@ All functions are pure (DataFrame in -> DataFrame out) so they are easy to test
 with small hand-made tables.
 """
 
+import unicodedata
+
 import pandas as pd
 
 from .models import comfort_index, comfort_label
@@ -48,6 +50,28 @@ def metric_label(column):
     return f"{name} ({unit})" if unit else name
 
 
+def _plain(text):
+    """'Bogotá' -> 'bogota': lower case without accents, for comparing names."""
+    decomposed = unicodedata.normalize("NFKD", str(text))
+    return "".join(ch for ch in decomposed if not unicodedata.combining(ch)).lower()
+
+
+def display_city(query, api_city):
+    """The city name to show: the one we asked for, not the API's odd variant.
+
+    ('Tunis,TN', 'Tunisia') -> 'Tunis'; ('Zagreb,HR', 'Donji grad') -> 'Zagreb'.
+    If both are the same name apart from case or accents (('Brasilia,BR', 'Brasília')),
+    the API's spelling wins. Without a query, the API's city is used.
+    """
+    name = query.partition(",")[0].strip() if isinstance(query, str) else ""
+    if not name:
+        return api_city
+    if _plain(name) == _plain(api_city):
+        return api_city
+    # Capitalise each word by hand: str.title() would give "Saint John'S".
+    return " ".join(word[:1].upper() + word[1:] for word in name.split())
+
+
 def add_derived_metrics(df):
     """Add columns the API does not return directly. Returns a NEW DataFrame."""
     out = df.copy()
@@ -61,7 +85,9 @@ def add_derived_metrics(df):
         for col in derived:
             out[col] = pd.Series(dtype=object)
         return out
-    out["location"] = out["city"].where(out["country"].eq(""), out["city"] + ", " + out["country"])
+    # The name we asked for ("Tunis"), not the API's ("Tunisia"); see display_city().
+    name = pd.Series([display_city(q, c) for q, c in zip(out["query"], out["city"])], index=out.index)
+    out["location"] = name.where(out["country"].eq(""), name + ", " + out["country"])
     out["continent"] = out["country"].apply(continent_of)
     out["comfort_index"] = comfort_index(out["temperature"], out["humidity"], out["wind_speed"]).round(1)
     out["comfort_label"] = out["comfort_index"].apply(comfort_label)

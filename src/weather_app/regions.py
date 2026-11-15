@@ -113,7 +113,7 @@ WORLD_CAPITALS = {
     ],
     "Oceania": [
         "Canberra,AU", "Suva,FJ", "Tarawa,KI", "Majuro,MH", "Palikir,FM", "Yaren,NR",
-        "Wellington,NZ", "Ngerulmud,PW", "Port Moresby,PG", "Apia,WS", "Honiara,SB",
+        "Wellington,NZ", "Melekeok,PW", "Port Moresby,PG", "Apia,WS", "Honiara,SB",
         "Nuku'alofa,TO", "Funafuti,TV", "Port Vila,VU",
     ],
 }

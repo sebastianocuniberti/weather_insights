@@ -41,11 +41,30 @@ and tests can import the package without a key.
 
 **Checked:**
 - Claude ran `uv run pytest` (44 passed) and a Streamlit `AppTest` smoke test of all 4 views.
-- TODO (team): run the app with a real key, try a bad city ("Atlantis"), an empty field, a wrong
-  key, and turning wifi off — confirm each shows its own message.
-- TODO (team): verify the comfort index by hand for one city.
+- Error messages, checked by Teammate 4 on 15 Nov with the real key (sidebar "Add a city" and the
+  5-Day Forecast page, which never writes to the log). Each problem shows its own message:
 
-**Kept as-is / changed / rejected:** _to fill in after the team has reviewed it._
+  | What we tried | Where | Message shown |
+  |---|---|---|
+  | Empty field (or only spaces) | sidebar | "Please type a city name — the field is empty." |
+  | `12345` | sidebar | "'12345' contains characters a city name can't have (numbers or symbols). Use e.g. 'Madrid' or 'Paris,FR'." |
+  | `Atlantis` | forecast | *No error:* the API finds **Atlantis, South Africa** (−33.57, 18.48) and shows its forecast. A good reason to add a country code. |
+  | `Atlantis,GR` (unknown city) | forecast | "OpenWeatherMap doesn't know that city. Check the spelling, or add a country code like 'Valencia,ES'." |
+  | Wrong API key | forecast | "The API key was rejected (invalid, expired, or not activated yet — new OpenWeatherMap keys can take up to 2 hours)." |
+  | No key in `variables.env` | forecast | "🔑 OPENWEATHER_API_KEY is not set. Copy variables.env.example to variables.env and fill in your own key." |
+  | No internet (all requests sent to an unreachable proxy) | forecast | "Could not reach the server — check your internet connection." |
+
+  Any name that passes the format check is added to the sidebar ("Added Atlantis,GR. Press
+  'Fetch now' to load it."); an unknown city is only reported when it is fetched.
+- Comfort index checked by hand for a real row (Madrid, 15 Nov 13:43 UTC: 12.75 °C, 87 %,
+  7.72 m/s): 100 − 24.75 (temperature) − 13.5 (humidity) − 18.88 (wind) = 42.87 → 42.9, the same
+  as the app. Now a test in `tests/test_data_quality.py`.
+
+**Kept as-is / changed / rejected:**
+- Kept: the exception classes, `APIClient` → `OpenWeatherClient`, the CSV log and the comfort
+  index formula (checked by hand above).
+- Changed from the starter template: `config.py` no longer raises at import time (see above).
+- Changed later: the app grew from 4 views to the pages described in the entries below.
 
 ---
 
@@ -73,8 +92,10 @@ history builds up without remembering to fetch. Sebastiano asked for both.
 - TODO (team): open the forecast page with the real key for 2-3 cities and compare a few values
   with openweathermap.org.
 
-**Kept as-is / changed / rejected:** _to fill in after the team has reviewed it._
-**Later removed (31 Oct):** the `--every HOURS` automatic-logging option — see the next entry.
+**Kept as-is / changed / rejected:**
+- Kept: the forecast page, `ForecastPoint`/`Forecast` and the guard that keeps forecasts out of
+  the log.
+- **Removed (31 Oct):** the `--every HOURS` automatic-logging option — see the next entry.
 
 ---
 
@@ -147,10 +168,13 @@ and Sebastiano chose manual fetching about 5 times a day.
 **Checked:**
 - Claude ran `uv run pytest` (72 passed) and an `AppTest` of all pages on a copy of our real log,
   with a fake API: 107 requests, exactly one automatic pause after 55, one failing city skipped.
-- TODO (team): run "Fetch city sets" with the real key and note which preset cities (if any) the
-  API doesn't recognise; fix their spelling in `regions.py`.
+- Real fetch of every set on 15 Nov: 261 of 262 cities worked. The only failure was a capital
+  (Ngerulmud, Palau), fixed in the World capitals entry below. All preset analysis-set cities
+  were recognised.
 
-**Kept as-is / changed / rejected:** _to fill in after the team has reviewed it._
+**Kept as-is / changed / rejected:**
+- Kept: the four sets, `plan_batches()` and the rate limiter in the base class.
+- Changed: default cities now carry country codes (the Venice, Florida bug above).
 
 ---
 
@@ -187,10 +211,13 @@ Sebastiano: "Go ahead and add air quality too."
 - Claude ran `uv run pytest` (90 passed) and an `AppTest` on a copy of our real log with a fake
   API: 262 cities, 524 requests, 9 automatic pauses, air-quality failures kept the weather, every
   page rendered. This found one real bug (no description for the new set on Analysis Sets), fixed.
-- TODO (team): run one full fetch with the real key (~10 min), list any capitals the API doesn't
-  recognise, and fix their spelling in `regions.py`.
+- Full fetch with the real key on 15 Nov: 195 of 196 capitals recognised. `Ngerulmud,PW` (Palau)
+  returns 404. Teammate 4 tried the alternatives: `Melekeok,PW` and `Koror,PW` both work.
 
-**Kept as-is / changed / rejected:** _to fill in after the team has reviewed it._
+**Kept as-is / changed / rejected:**
+- Kept: the World capitals set, the extra weather fields and air quality.
+- Changed: Palau's capital is now `Melekeok,PW`. Ngerulmud is the seat of government inside
+  Melekeok State (same latitude, 7.50° N). Koror was rejected because it is the former capital.
 
 ---
 
@@ -233,7 +260,52 @@ scheduled automatic data collection, because the presentation is the next day).
 - First version of the match score gave 56 cities 100 %, so the temperature part was changed to
   peak at the middle of the chosen range; ties dropped to a handful.
 - Found that Ngerulmud (Palau) failed in the 15 Nov fetch and that the API renames some cities
-  (Tunis -> "Tunisia", Zagreb -> "Donji grad") — assigned to Teammate 4 in `TEAM_TASKS.md`.
+  (Tunis -> "Tunisia", Zagreb -> "Donji grad") — assigned to Teammate 4 in `TEAM_TASKS.md`,
+  fixed in the next entry.
 
-**Kept as-is / changed / rejected:** _to fill in after the team has reviewed it._
+**Kept as-is / changed / rejected:**
+- Kept: the Home, Find my city and City profile pages, and the `app_pages/` plug-in system.
+- Changed: the match score's temperature part (see above).
+
+---
+
+## Feature: data quality and testing (Task 4, session 2)
+
+**Asked (Teammate 4, 15 Nov 2026, Claude Code in VS Code):** "ok, read through the repo, i am team
+mate 4 and should do the tasks 4 data quality and testing. am i currently blocked by other tasks
+that are not yet finished?" and then "do all the necessary changes, you should not commit [...]
+also if you can fix the environment problem in the repo do it".
+
+**Got:**
+- `regions.py`: Palau's capital `Ngerulmud,PW` → `Melekeok,PW` (found by running
+  `scripts/collect.py` with both candidates, then undoing the log change).
+- `analytics.py`: new `display_city(query, api_city)`; `add_derived_metrics()` now builds
+  `location` from the name we asked for, so Tunis shows as "Tunis, TN", not "Tunisia, TN". The
+  raw `city` column still holds the API's name.
+- `tests/test_data_quality.py` (new, 19 tests): the comfort index by hand, the Palau fix, every
+  preset has a country code, one capital per country, and the naming rules.
+- `tests/conftest.py`: puts `src/` on the import path. `uv run pytest` failed with "No module named
+  'weather_app'" because macOS/iCloud had hidden the `.pth` file of the editable install, and
+  Python 3.13 ignores hidden `.pth` files.
+
+**Checked:**
+- Compared old and new `location` for all 4,596 logged rows: 15 cities get the name we asked for
+  (e.g. Zagreb, Paramaribo, Murmansk, Astana instead of Nur-Sultan, Banjul instead of City of
+  Banjul). No city lost its history.
+- `uv run pytest`: 131 passed. An `AppTest` click-through of all 11 pages on the real log: no
+  errors; "Tunis, TN" opens on City profile and the trip planner's defaults still exist.
+- The error messages and the comfort index by hand: see the first entry.
+
+**Kept as-is / changed / rejected:**
+- Changed from the task description: the task said "title-cased query". Claude pointed out that
+  this would drop correct accents (Brasília → Brasilia, Rīga → Riga) and that `str.title()`
+  gives "Saint John'S". So when the query and the API name differ only in accents or capitals,
+  the API's spelling is kept. That also merges `Bogotá`/`Bogota` and `london`/`London` into one
+  location each.
+- Kept, knowing the side effect: rows fetched as plain `Venezia` now show as "Venezia, IT",
+  separate from "Venice, IT", because that is the name we asked for (261 → 262 locations).
+- The environment fix went into `tests/conftest.py`, not `pyproject.toml` (the cleaner place),
+  because `pyproject.toml` is Sebastiano's file. It fixes the tests only: the app itself still
+  needs `uv sync --no-editable` (or moving the project out of an iCloud folder) on Macs with
+  this problem.
 
