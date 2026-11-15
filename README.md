@@ -37,6 +37,8 @@ and it's downloadable as CSV for anyone who wants to buy or reuse the data.
 - **5-Day Forecast** — OpenWeatherMap's free 3-hourly forecast: temperature vs feels-like,
   chance of rain, a day-by-day outlook and the best time to go outside. Shown only, never logged.
 - **How it works** — what each derived metric means and how it is computed.
+- **About & plans** — the problem we solve, who it is for, live numbers from our history,
+  the Free / Pro / Business plans and the roadmap.
 
 ## Setup
 
@@ -129,9 +131,36 @@ a readable `__str__`.
 **Comfort index (0-100):** start at 100, minus 3 per °C away from 21 °C, minus 0.5 per % humidity
 outside 40-60 %, minus 4 per m/s of wind above 3 m/s; clipped to 0-100.
 
+## Business case
+
+**The problem.** Weather apps show one city at a time and only today. Someone deciding *where*
+to go has to open ten tabs, and still can't tell whether a city is usually like this or just
+lucky today. Air quality and daylight are hidden in other apps, if they're shown at all.
+
+**Who it's for.**
+- *Traveller:* "Where in Europe will it be sunny and 20-25 °C this weekend?"
+- *Remote worker:* "Which city has mild weather, clean air and long days right now?"
+- *Exchange student:* "How do these partner cities really compare, day after day?"
+
+**What makes us different.** We keep our own history of observations (the free API has none),
+compare 260+ cities at once, show air quality and daylight next to the temperature, and give
+every city a 0-100 match score. The *About & plans* page shows the live numbers.
+
+**Plans.**
+
+| Plan | Price | Includes |
+|---|---|---|
+| Free | €0 | Home, Find my city with the preset profiles, latest conditions |
+| Pro | €4 / month | Full history and trends, city profiles, forecast, Head to head, Trip planner, alerts |
+| Business | from €99 / month | Data downloads and API access for travel agencies, relocation firms and universities |
+
+**Roadmap.** Automatic data collection several times a day, weather and air-quality alerts,
+more cities (beach towns, ski resorts, university cities) and a mobile-friendly layout.
+
 ## Team
 
-<!-- Replace with real names and a one-line summary of who worked on what. -->
-- Sebastiano Cuniberti — repository setup, API client and data model
-- _Teammate 2_ — …
-- _Teammate 3_ — …
+- Sebastiano Cuniberti — repository setup, API client, data model, analytics and integration
+- _Teammate 1_ — Head to head page: compare two cities side by side
+- Daniel Rodriguez — Trip planner: best city and day in the next 5 days, from the forecast
+- Daniella Jimenez — Business case: About & plans page and this README section
+- _Teammate 4_ — Data quality and testing: city name fixes, error checks, comfort index test
