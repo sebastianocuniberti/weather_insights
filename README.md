@@ -160,7 +160,7 @@ more cities (beach towns, ski resorts, university cities) and a mobile-friendly 
 ## Team
 
 - Sebastiano Cuniberti — repository setup, API client, data model, analytics and integration
-- _Teammate 1_ — Head to head page: compare two cities side by side
+- Ahsan Shaik — Head to head page: compare two cities side by side
 - Daniel Rodriguez — Trip planner: best city and day in the next 5 days, from the forecast
 - Daniella Jimenez — Business case: About & plans page and this README section
-- _Teammate 4_ — Data quality and testing: city name fixes, error checks, comfort index test
+- Sebastian — Data quality and testing: city name fixes, error checks, comfort index test
